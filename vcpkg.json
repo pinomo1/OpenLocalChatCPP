@@ -1,0 +1,7 @@
+{
+  "dependencies": [
+    "uwebsockets",
+    "nlohmann-json",
+    "cryptopp"
+  ]
+}

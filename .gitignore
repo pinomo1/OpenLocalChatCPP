@@ -1,0 +1,6 @@
+.vs/
+vcpkg_installed/
+x64/
+x86/
+OpenLocalChatCPP/x64/
+OpenLocalChatCPP/users.txt
