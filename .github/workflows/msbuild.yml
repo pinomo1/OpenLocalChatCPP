@@ -32,7 +32,15 @@ jobs:
 
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v1.0.2
-
+      
+    - name: run-vcpkg
+      uses: lukka/run-vcpkg@v11.1
+      with:
+        # Run the installation of packages by running `vcpkg install` on the directory of the discovered 'vcpkg.json' file. Default is false.
+        runVcpkgInstall: true
+        # Specify the full SHA-1 hash of a Git commit (not a branch name, nor a tag!) that establishes which version of vcpkg needs to be used. When using vcpkg as a Git submodule, this input is *not* needed as implicitly specified by the submodule.
+        vcpkgGitCommitId: 9edb1b8e590cc086563301d735cae4b6e732d2d2
+        
     - name: Build
       working-directory: ${{env.GITHUB_WORKSPACE}}
       # Add additional options to the MSBuild command line here (like platform or verbosity level).
