@@ -1,8 +1,8 @@
 #include "User.h"
 #include "uuid.h"
 #include <iostream>
-#include <cryptopp/sha.h>
-#include <cryptopp/hex.h>
+#include "cryptopp/sha.h"
+#include "cryptopp/hex.h"
 
 std::string User::computeHash(std::string password) {
 	CryptoPP::SHA256 hash;
