@@ -15,6 +15,7 @@ public:
 	std::string getName();
 	bool checkPassword(std::string password);
 	bool isToken(std::string token);
+	std::string getToken();
 	std::string generateToken();
 	std::string computeHash(std::string password);
 	void resetToken();
@@ -25,12 +26,20 @@ public:
 	}
 
 	static bool isValidName(std::string name) {
-		if (name.length() > 20 || name.length() < 4) {
+		if (name.length() > 20 || name.length() < 3) {
+			return false;
+		}
+		if (!std::isalpha(name[0])) {
 			return false;
 		}
 		for (char c : name) {
-			if (!std::isalnum(c)) {
+			if (!isValidCharacter(c)) {
 				return false;
+			}
+			if (std::isalnum(c)) {
+				if (!std::islower(c)) {
+					return false;
+				}
 			}
 		}
 		return true;

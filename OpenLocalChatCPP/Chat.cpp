@@ -3,8 +3,10 @@
 #include "uwebsockets/App.h"
 #include <map>
 #include <fstream>
+#include <vector>
 
 std::map<std::string, User*> users;
+std::map<std::string, std::string> tokens;
 std::string generalChatID = "general";
 std::string filename = "users.txt";
 
@@ -13,6 +15,10 @@ struct PerSocketData {
 
 bool hasUser(std::string name) {
 	return users.find(name) != users.end();
+}
+
+bool hasToken(std::string token) {
+	return tokens.find(token) != tokens.end();
 }
 
 void addUserToFile(User user) {
@@ -50,11 +56,75 @@ void splitUserInfo(std::string userInfo, std::string& username, std::string& pas
 	password = userInfo.substr(userInfo.find(" ") + 1);
 }
 
-void splitTokenAndMessage(std::string tokenAndMessage, std::string& username, std::string& token, std::string& message) {
-	username = tokenAndMessage.substr(0, tokenAndMessage.find(" "));
-	tokenAndMessage = tokenAndMessage.substr(tokenAndMessage.find(" ") + 1);
+void splitTokenAndMessage(std::string tokenAndMessage, std::string& token, std::string& message) {
 	token = tokenAndMessage.substr(0, tokenAndMessage.find(" "));
 	message = tokenAndMessage.substr(tokenAndMessage.find(" ") + 1);
+}
+
+bool checkToken(std::string token, std::string* error) {
+	if (!hasToken(token)) {
+		*error = "no_such_token";
+		return false;
+	}
+	std::string username = tokens[token];
+	if (!hasUser(username)) {
+		*error = "no_such_user";
+		tokens.erase(token);
+		return false;
+	}
+	User* user = users[username];
+	if (!user->isToken(token)) {
+		*error = "no_such_token";
+		tokens.erase(token);
+		return false;
+	}
+	return true;
+}
+
+User* userByToken(std::string token, std::string* error) {
+	if (!checkToken(token, error)) {
+		return nullptr;
+	}
+	return users[tokens[token]];
+}
+
+template<class ...Args>
+bool isFormatValid(std::string message, std::string command, Args... args) {
+	std::vector<std::string> stringArgs = { args... };
+	std::string format = command;
+	for (std::string arg : stringArgs) {
+		format += " " + arg;
+	}
+	return message == format;
+}
+
+void sendError(uWS::WebSocket<false, true, PerSocketData>* ws, std::string error, uWS::OpCode opCode) {
+	ws->send("0 " + error, opCode);
+}
+
+void sendInvalidFormatError(uWS::WebSocket<false, true, PerSocketData>* ws, uWS::OpCode opCode) {
+	sendError(ws, "invalid_format", opCode);
+}
+
+bool credentialsChecker(std::string username, std::string password, bool registration = true, std::string* error = nullptr) {
+	if (!User::isValidPassword(password)) {
+		*error = "invalid_password";
+		return false;
+	}
+
+	if (!User::isValidName(username)) {
+		*error = "invalid_name";
+		return false;
+	}
+	if (registration && hasUser(username)) {
+		*error = "user_exists";
+		return false;
+	}
+	if (!registration && !hasUser(username)) {
+		*error = "no_such_user";
+		return false;
+	}
+	return true;
 }
 
 int main() {
@@ -70,95 +140,110 @@ int main() {
 		},
 		.message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
 			std::cout << "Message received: " << message << std::endl;
-			if (message.starts_with("join")) {
+			std::string msg = std::string(message);
+			std::string command = std::string(message.substr(0, message.find(" ")));
+			std::string args = std::string(message.substr(message.find(" ") + 1));
+			std::string error = "";
+
+			if (command == "login") {
 				std::string username, password;
-				splitUserInfo(std::string(message.substr(5)), username, password);
+				splitUserInfo(args, username, password);
 
-				if ("join " + username + " " + password != message) {
-					ws->send("0 invalid_format", opCode);
-					return;
-				}
-
-				if (!User::isValidPassword(password)) {
-					ws->send("0 invalid_password", opCode);
+				if (!isFormatValid(msg, command, username, password)) {
+					sendInvalidFormatError(ws, opCode);
 					return;
 				}
 
-				if (!User::isValidName(username)) {
-					ws->send("0 invalid_name", opCode);
+				if (!credentialsChecker(username, password, false, &error)) {
+					sendError(ws, error, opCode);
 					return;
 				}
-				if (!hasUser(username)) {
-					ws->send("0 not_exists", opCode);
-					return;
-				}
+
 				User* user = users[username];
 				if (!user->checkPassword(password)) {
-					ws->send("0 wrong_password", opCode);
+					sendError(ws, "wrong_password", opCode);
 					return;
+				}
+				std::string oldToken = user->getToken();
+				if (hasToken(oldToken)) {
+					tokens.erase(oldToken);
 				}
 				std::string token = user->generateToken();
+				tokens[token] = username;
 				ws->send("1 " + token, opCode);
-				ws->subscribe(generalChatID);
 				return;
 			}
-			if (message.starts_with("register")) {
+			if (command == "join") {
+				std::string token;
+				token = args;
+
+				if (!isFormatValid(msg, command, token)) {
+					sendInvalidFormatError(ws, opCode);
+					return;
+				}
+
+				User* user = userByToken(token, &error);
+				if (user == nullptr) {
+					sendError(ws, error, opCode);
+					return;
+				}
+				ws->send("1", opCode);
+				ws->subscribe(generalChatID);
+				sendAndPublishMessage(ws, tokens[token] + " joined", opCode);
+				return;
+			}
+			if (command == "register") {
 				std::string username, password;
-				splitUserInfo(std::string(message.substr(9)), username, password);
+				splitUserInfo(args, username, password);
 
-				if ("register " + username + " " + password != message) {
-					ws->send("0 invalid_format", opCode);
-					return;
-				}
-
-				if (!User::isValidPassword(password)) {
-					ws->send("0 invalid_password", opCode);
+				if (!isFormatValid(msg, command, username, password)) {
+					sendInvalidFormatError(ws, opCode);
 					return;
 				}
 
-				if (!User::isValidName(username)) {
-					ws->send("0 invalid_name", opCode);
+				if (!credentialsChecker(username, password, true, &error)) {
+					sendError(ws, error, opCode);
 					return;
 				}
-				if (hasUser(username)) {
-					ws->send("0 exists", opCode);
-					return;
-				}
+
 				users[username] = new User(username, password);
 				ws->send("1", opCode);
 				addUserToFile(*users[username]);
 				return;
 			}
-			if (message.starts_with("chat")) {
-				std::string username, token, chatMessage;
-				splitTokenAndMessage(std::string(message.substr(5)), username, token, chatMessage);
+			if (command == "chat") {
+				std::string token, chatMessage;
+				splitTokenAndMessage(args, token, chatMessage);
 				if (chatMessage.length() > 4096) {
-					ws->send("0 too_long", opCode);
+					sendError(ws, "message_too_long", opCode);
 					return;
 				}
-				if (!hasUser(username)) {
-					ws->send("0 not_exists", opCode);
+
+				if (!isFormatValid(msg, command, token, chatMessage)) {
+					sendInvalidFormatError(ws, opCode);
 					return;
 				}
-				User* user = users[username];
-				if (!user->isToken(token)) {
-					ws->send("0 wrong_token", opCode);
+
+				User* user = userByToken(token, &error);
+				if (user == nullptr) {
+					sendError(ws, error, opCode);
 					return;
 				}
+
+				std::string username = tokens[token];
 				chatMessage = username + ": " + chatMessage;
 				sendAndPublishMessage(ws, chatMessage, opCode);
 				return;
 			}
-			if (message.starts_with("disconnect")) {
-				std::string username, token;
-				splitTokenAndMessage(std::string(message.substr(11)), username, token, token);
-				if (!hasUser(username)) {
-					ws->send("0 not_exists", opCode);
+			if (command == "logout") {
+				std::string token = args;
+				if (!isFormatValid(msg, command, token)) {
+					sendInvalidFormatError(ws, opCode);
 					return;
 				}
-				User* user = users[username];
-				if (!user->isToken(token)) {
-					ws->send("0 wrong_token", opCode);
+				User* user = userByToken(token, &error);
+				if (user == nullptr) {
+					sendError(ws, error, opCode);
 					return;
 				}
 				user->resetToken();
@@ -166,7 +251,7 @@ int main() {
 				ws->close();
 				return;
 			}
-			ws->send("0 unknown_command", opCode);
+			sendError(ws, "no_such_command", opCode);
 		},
 		.drain = [](auto* ws) {
 			std::cout << "Drain event" << std::endl;
