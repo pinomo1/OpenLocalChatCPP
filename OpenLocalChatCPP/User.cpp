@@ -43,6 +43,10 @@ bool User::isToken(std::string token) {
 	return lastToken != "" && token == lastToken;
 }
 
+std::string User::getToken() {
+	return lastToken;
+}
+
 std::string User::generateToken() {
 	lastToken = newUUID();
 	return lastToken;
