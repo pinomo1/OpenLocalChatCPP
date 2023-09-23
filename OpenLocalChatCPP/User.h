@@ -36,7 +36,7 @@ public:
 			if (!isValidCharacter(c)) {
 				return false;
 			}
-			if (std::isalnum(c)) {
+			if (std::isalpha(c)) {
 				if (!std::islower(c)) {
 					return false;
 				}
