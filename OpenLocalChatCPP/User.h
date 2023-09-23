@@ -29,6 +29,12 @@ public:
 		if (name.length() > 20 || name.length() < 3) {
 			return false;
 		}
+		if (name == "system") {
+			return false;
+		}
+		if (name == "admin") {
+			return false;
+		}
 		if (!std::isalpha(name[0])) {
 			return false;
 		}

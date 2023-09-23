@@ -1,42 +1,10 @@
-#include "User.h"
+#include "Storage.h"
 #include <iostream>
-#include "uwebsockets/App.h"
-#include <map>
-#include <fstream>
 #include <vector>
+#include <string>
 
-std::map<std::string, User*> users;
-std::map<std::string, std::string> tokens;
+Storage* s;
 std::string generalChatID = "general";
-std::string filename = "users.txt";
-
-struct PerSocketData {
-};
-
-bool hasUser(std::string name) {
-	return users.find(name) != users.end();
-}
-
-bool hasToken(std::string token) {
-	return tokens.find(token) != tokens.end();
-}
-
-void addUserToFile(User user) {
-	std::ofstream file;
-	file.open(filename, std::ios::app);
-	file << user.getName() << " " << user.getPasswordHash() << std::endl;
-	file.close();
-}
-
-void loadUsersFromFile() {
-	std::ifstream file;
-	file.open(filename);
-	std::string name, passwordHash;
-	while (file >> name >> passwordHash) {
-		users[name] = new User(name, passwordHash, false);
-	}
-	file.close();
-}
 
 void sendMessageToUser(uWS::WebSocket<false, true, PerSocketData>* ws, std::string message, uWS::OpCode opCode) {
 	ws->send(message, opCode);
@@ -62,20 +30,20 @@ void splitTokenAndMessage(std::string tokenAndMessage, std::string& token, std::
 }
 
 bool checkToken(std::string token, std::string* error) {
-	if (!hasToken(token)) {
+	if (!s->hasToken(token)) {
 		*error = "no_such_token";
 		return false;
 	}
-	std::string username = tokens[token];
-	if (!hasUser(username)) {
+	std::string username = s->getUsernameByToken(token);
+	if (!s->hasUser(username)) {
 		*error = "no_such_user";
-		tokens.erase(token);
+		s->eraseToken(token);
 		return false;
 	}
-	User* user = users[username];
+	User* user = s->getUser(username);
 	if (!user->isToken(token)) {
 		*error = "no_such_token";
-		tokens.erase(token);
+		s->eraseToken(token);
 		return false;
 	}
 	return true;
@@ -85,7 +53,7 @@ User* userByToken(std::string token, std::string* error) {
 	if (!checkToken(token, error)) {
 		return nullptr;
 	}
-	return users[tokens[token]];
+	return s->getUserByToken(token);
 }
 
 template<class ...Args>
@@ -116,11 +84,11 @@ bool credentialsChecker(std::string username, std::string password, bool registr
 		*error = "invalid_name";
 		return false;
 	}
-	if (registration && hasUser(username)) {
+	if (registration && s->hasUser(username)) {
 		*error = "user_exists";
 		return false;
 	}
-	if (!registration && !hasUser(username)) {
+	if (!registration && !s->hasUser(username)) {
 		*error = "no_such_user";
 		return false;
 	}
@@ -128,8 +96,8 @@ bool credentialsChecker(std::string username, std::string password, bool registr
 }
 
 int main() {
+	s = new Storage();
 	srand(time(NULL));
-	loadUsersFromFile();
 
 	uWS::TemplatedApp<false>::WebSocketBehavior<PerSocketData> wsb = {
 		.compression = uWS::SHARED_COMPRESSOR,
@@ -159,17 +127,17 @@ int main() {
 					return;
 				}
 
-				User* user = users[username];
+				User* user = s->getUser(username);
 				if (!user->checkPassword(password)) {
 					sendError(ws, "wrong_password", opCode);
 					return;
 				}
 				std::string oldToken = user->getToken();
-				if (hasToken(oldToken)) {
-					tokens.erase(oldToken);
+				if (s->hasToken(oldToken)) {
+					s->eraseToken(oldToken);
 				}
 				std::string token = user->generateToken();
-				tokens[token] = username;
+				s->addToken(token, username);
 				ws->send("1 " + token, opCode);
 				return;
 			}
@@ -187,9 +155,10 @@ int main() {
 					sendError(ws, error, opCode);
 					return;
 				}
+				s->addSocket(ws, token);
 				ws->send("1", opCode);
 				ws->subscribe(generalChatID);
-				sendAndPublishMessage(ws, "System: " + tokens[token] + " joined", opCode);
+				sendAndPublishMessage(ws, "System: " + s->getUsernameByToken(token) + " joined", opCode);
 				return;
 			}
 			if (command == "register") {
@@ -206,9 +175,8 @@ int main() {
 					return;
 				}
 
-				users[username] = new User(username, password);
+				s->addUser(username, password);
 				ws->send("1", opCode);
-				addUserToFile(*users[username]);
 				return;
 			}
 			if (command == "chat") {
@@ -230,7 +198,7 @@ int main() {
 					return;
 				}
 
-				std::string username = tokens[token];
+				std::string username = s->getUsernameByToken(token);
 				chatMessage = username + ": " + chatMessage;
 				sendAndPublishMessage(ws, chatMessage, opCode);
 				return;
@@ -247,6 +215,11 @@ int main() {
 					return;
 				}
 				user->resetToken();
+				if (s->hasToken(token)) {
+					s->eraseToken(token);
+					s->eraseSocket(ws);
+				}
+				publishMessageToGeneral(ws, "System: " + user->getName() + " left", opCode);
 				ws->send("1", opCode);
 				ws->close();
 				return;
@@ -264,6 +237,13 @@ int main() {
 		},
 		.close = [](auto* ws, int code, std::string_view message) {
 			std::cout << "Client disconnected" << std::endl;
+			if (s->isSocketToken(ws)) 
+			{
+				std::string token = s->getTokenBySocket(ws);
+				std::string username = s->getUsernameByToken(token);
+				publishMessageToGeneral(ws, "System: " + username + " left", uWS::OpCode::TEXT);
+				s->eraseSocket(ws);
+			}
 		}
 	};
 
