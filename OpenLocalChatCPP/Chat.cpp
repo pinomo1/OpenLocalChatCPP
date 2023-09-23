@@ -189,7 +189,7 @@ int main() {
 				}
 				ws->send("1", opCode);
 				ws->subscribe(generalChatID);
-				sendAndPublishMessage(ws, tokens[token] + " joined", opCode);
+				sendAndPublishMessage(ws, "System: " + tokens[token] + " joined", opCode);
 				return;
 			}
 			if (command == "register") {
